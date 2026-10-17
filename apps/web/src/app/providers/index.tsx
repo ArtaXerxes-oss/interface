@@ -1,9 +1,16 @@
-import { createContext, useCallback, useContext, useEffect, useRef } from "react"
+import { Component, createContext, useCallback, useContext, useEffect, useRef } from "react"
 import { QueryProvider } from "./QueryProvider"
-import type { ReactNode } from "react"
+import type { ErrorInfo, ReactNode } from "react"
 import { useWalletStore } from "@/features/wallet/store/wallet-store"
 import { NETWORK } from "@/app/config/network"
 import { ThemeProvider } from "@/ui/theme-provider"
+import { DirectionProvider } from "@/ui/direction-provider"
+import { ErrorPage } from "@/app/error-page"
+import { validateIndexerConfig } from "@/app/config/indexer"
+import { useIndexerInvalidation } from "@/lib/graphql/use-indexer-invalidation"
+
+// Validate indexer configuration at module load
+validateIndexerConfig()
 
 export type WalletStatus = "disconnected" | "connecting" | "connected" | "error"
 
@@ -29,9 +36,29 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const { address, status, setConnected, setDisconnected, setStatus } = useWalletStore()
   const mountedRef = useRef(true)
 
+  // Invalidate indexer queries on network or account changes
+  useIndexerInvalidation(address)
+
   useEffect(() => {
     return () => { mountedRef.current = false }
   }, [])
+
+  // Dev-only hook so e2e tests can seed a connected wallet without a real
+  // Freighter / Stellar Wallets Kit extension. import.meta.env.DEV is true
+  // for `vite dev` (including the Playwright webServer) and false for a
+  // production build, so this never ships to production.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+
+    ;(window as unknown as { __SO4_TEST_WALLET__?: unknown }).__SO4_TEST_WALLET__ = {
+      connect: (fakeAddress: string, walletId = "fake") => setConnected(fakeAddress, walletId),
+      disconnect: () => setDisconnected(),
+    }
+
+    return () => {
+      delete (window as unknown as { __SO4_TEST_WALLET__?: unknown }).__SO4_TEST_WALLET__
+    }
+  }, [setConnected, setDisconnected])
 
   useEffect(() => {
     let unsub1: (() => void) | undefined
@@ -97,12 +124,37 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   )
 }
 
+type ErrorBoundaryState = { hasError: boolean }
+
+class ErrorBoundary extends Component<{ children: ReactNode }, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { hasError: false }
+
+  static getDerivedStateFromError(): ErrorBoundaryState {
+    return { hasError: true }
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("[ErrorBoundary]", error, info.componentStack)
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return <ErrorPage onReset={() => this.setState({ hasError: false })} />
+    }
+    return this.props.children
+  }
+}
+
 export function AppProviders({ children }: { children: ReactNode }) {
   return (
-    <QueryProvider>
-      <WalletProvider>
-        <ThemeProvider>{children}</ThemeProvider>
-      </WalletProvider>
-    </QueryProvider>
+    <ErrorBoundary>
+      <QueryProvider>
+        <WalletProvider>
+          <ThemeProvider>
+            <DirectionProvider>{children}</DirectionProvider>
+          </ThemeProvider>
+        </WalletProvider>
+      </QueryProvider>
+    </ErrorBoundary>
   )
 }

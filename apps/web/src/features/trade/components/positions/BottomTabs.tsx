@@ -1,22 +1,32 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@workspace/ui/components/tabs"
 import { usePositions } from "../../hooks/usePositions"
-import { useOrders } from "../../hooks/useOrders"
+import { hasFrozenOrders, useOrders } from "../../hooks/useOrders"
+import { OrderExecutionFrozenBanner } from "./OrderExecutionFrozenBanner"
 import { PositionsList } from "./PositionsList"
 import { OrdersList } from "./OrdersList"
+import { OrderHistoryList } from "./OrderHistoryList"
+import { TradeHistoryList } from "./TradeHistoryList"
+import { FundingActivityList } from "./FundingActivityList"
 import type { Position } from "../../hooks/usePositions"
-
-// TODO: Add Trades and Claims tabs once tradeHistory + claimFundingFees are wired up
 
 type Props = {
   onSelectPosition?: (position: Position) => void
+  value?: "positions" | "orders" | "history" | "trades" | "claims"
+  onValueChange?: (value: "positions" | "orders" | "history" | "trades" | "claims") => void
 }
 
-export function BottomTabs({ onSelectPosition }: Props) {
+export function BottomTabs({ onSelectPosition, value, onValueChange }: Props) {
   const { data: positions = [] } = usePositions()
   const { data: orders = [] } = useOrders()
 
+  // OB-088: The claimable funding fee summary that was in this component has
+  // moved into FundingActivityList, which shows all fee/funding activity with
+  // explicit units, accrual/settlement status, and per-row claim actions.
+  // This keeps BottomTabs lean and delegates fee display to the specialised list.
+
   return (
-    <Tabs defaultValue="positions">
+    <Tabs value={value} defaultValue="positions" onValueChange={(next) => onValueChange?.(next as NonNullable<Props["value"]>)}>
+      <OrderExecutionFrozenBanner visible={hasFrozenOrders(orders)} />
       <TabsList className="border-b border-border bg-transparent px-4">
         <TabsTrigger value="positions">
           Positions {positions.length > 0 && `(${positions.length})`}
@@ -24,13 +34,15 @@ export function BottomTabs({ onSelectPosition }: Props) {
         <TabsTrigger value="orders">
           Orders {orders.length > 0 && `(${orders.length})`}
         </TabsTrigger>
+        <TabsTrigger value="history">Order history</TabsTrigger>
         <TabsTrigger value="trades">
           Trades
-          {/* TODO: Show count from useTradeHistory once implemented */}
         </TabsTrigger>
         <TabsTrigger value="claims">
-          Claims
-          {/* TODO: Show badge when claimable funding fees > 0 */}
+          {/* OB-088: Label updated to "Funding & Fees" to reflect that this tab
+              now shows the full activity history (accrued, settled, claimed) —
+              not just a snapshot of claimable amounts. */}
+          Funding &amp; Fees
         </TabsTrigger>
       </TabsList>
 
@@ -42,18 +54,20 @@ export function BottomTabs({ onSelectPosition }: Props) {
         <OrdersList />
       </TabsContent>
 
-      <TabsContent value="trades">
-        <div className="flex h-24 items-center justify-center text-xs text-muted-foreground">
-          {/* TODO: Implement TradeHistoryList using useTradeHistory (TanStack Query + Soroban events) */}
-          Trade history coming soon
-        </div>
+      <TabsContent value="history">
+        <OrderHistoryList />
       </TabsContent>
 
+      <TabsContent value="trades">
+        <TradeHistoryList />
+      </TabsContent>
+
+      {/* OB-088: Replaced the ad-hoc claimable-positions table with FundingActivityList,
+          which shows all fee/funding activity from the indexer with explicit token units,
+          accrual/settlement status (so it cannot be confused with trading PnL), and
+          per-row claim actions only for settled funding-type rows. */}
       <TabsContent value="claims">
-        <div className="flex h-24 items-center justify-center text-xs text-muted-foreground">
-          {/* TODO: Implement Claims using claimFundingFees from stellar.ts */}
-          Claims coming soon
-        </div>
+        <FundingActivityList feeType="funding" />
       </TabsContent>
     </Tabs>
   )

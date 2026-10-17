@@ -8,7 +8,7 @@ const SESSION_KEY = "so4-network-mismatch-dismissed"
 
 export function NetworkMismatchBanner() {
   const { pathname } = useLocation()
-  const { mismatch, network } = useNetwork()
+  const { mismatch, displayLabel } = useNetwork()
   const { status } = useWalletStore()
   const [dismissed, setDismissed] = useState(
     () => sessionStorage.getItem(SESSION_KEY) === "1"
@@ -18,7 +18,7 @@ export function NetworkMismatchBanner() {
   if (pathname === "/") return null
   if (!mismatch || status !== "connected" || dismissed) return null
 
-  const walletLabel = network === "mainnet" ? "Mainnet" : "Testnet"
+  const walletLabel = displayLabel
   const appLabel = NETWORK.name === "mainnet" ? "Mainnet" : "Testnet"
 
   function dismiss() {
@@ -37,7 +37,7 @@ export function NetworkMismatchBanner() {
       </span>
       <button
         onClick={dismiss}
-        className="ml-4 shrink-0 font-medium underline-offset-2 hover:underline"
+        className="ms-4 shrink-0 font-medium underline-offset-2 hover:underline"
         aria-label="Dismiss network mismatch warning"
       >
         Dismiss

@@ -43,3 +43,13 @@ push-issues.py
 
 # VSCode
 fix.md
+
+# Playwright transient run output (baseline screenshots in
+# e2e/*.spec.ts-snapshots/ are intentionally NOT ignored — those are
+# committed regression baselines, not run output)
+test-results/
+# Generated OG images
+apps/docs/public/og/
+.nitro-static/og/
+# Editor swap files
+*.swp

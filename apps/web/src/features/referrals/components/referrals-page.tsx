@@ -1,11 +1,22 @@
 import { useState } from "react"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@workspace/ui/components/tabs"
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@workspace/ui/components/tabs"
+import { AppShell } from "@workspace/ui/components/app-shell"
+import { PageHeader } from "@workspace/ui/components/page-header"
+import { useQueryClient } from "@tanstack/react-query"
 import { Navbar } from "../../../ui/Navbar"
-import { useAffiliateStats, useTraderStats } from "../hooks/use-referrals-data"
+import { useTraderStats } from "../hooks/use-referrals-data"
+import { useReferralCode } from "../queries/useReferralCode"
+import { useReferralTier } from "../queries/useReferralTier"
 import { TradersTab } from "./traders/traders-tab"
 import { AffiliatesTab } from "./affiliates/affiliates-tab"
 import { DistributionsTab } from "./distributions/distributions-tab"
 import { ReferralsSidebar } from "./referrals-sidebar"
+import { queryKeys } from "@/shared/lib/query-keys"
 
 type ReferralsTab = "traders" | "affiliates" | "distributions"
 
@@ -29,72 +40,75 @@ function LockIcon() {
 }
 
 export function ReferralsPage() {
+  const queryClient = useQueryClient()
   const [tab, setTab] = useState<ReferralsTab>("traders")
 
   const { data: traderStats } = useTraderStats()
-  const { data: affiliateStats } = useAffiliateStats()
+  const { data: affiliateCodeData } = useReferralCode()
+  const { data: affiliateTier } = useReferralTier()
 
   const traderCode = traderStats?.referralCode ?? null
-  const affiliateCode = affiliateStats?.code ?? null
+  const affiliateCode = affiliateCodeData ?? null
   const hasAffiliateCode = Boolean(affiliateCode)
 
   return (
-    <div className="flex min-h-svh flex-col bg-background text-foreground">
-      <Navbar variant="app" />
-      <div className="mx-auto w-full max-w-260 px-4 pb-16 pt-8 sm:px-6 lg:px-12">
-        <header className="mb-8">
-          <h1 className="text-[22px] font-semibold tracking-tight">Referrals</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Get fee discounts and earn up to 15% commission through the SO4 referral program
-          </p>
-        </header>
+    <AppShell navbar={<Navbar variant="app" />} maxWidth="260">
+      <PageHeader
+        title="Referrals"
+        description="Get fee discounts and earn up to 15% commission through the SO4 referral program"
+        tabs={
+          <Tabs
+            value={tab}
+            onValueChange={(v) => setTab(v as ReferralsTab)}
+            className="gap-6"
+          >
+            <TabsList className="h-9 w-full overflow-x-auto sm:w-fit">
+              <TabsTrigger value="traders">Traders</TabsTrigger>
+              <TabsTrigger value="affiliates">Affiliates</TabsTrigger>
+              <TabsTrigger
+                value="distributions"
+                className="gap-1.5"
+                disabled={!hasAffiliateCode}
+              >
+                {!hasAffiliateCode && <LockIcon />}
+                Distributions
+              </TabsTrigger>
+            </TabsList>
 
-        <Tabs
-          value={tab}
-          onValueChange={(v) => setTab(v as ReferralsTab)}
-          className="gap-6"
-        >
-          <TabsList className="h-9">
-            <TabsTrigger value="traders">Traders</TabsTrigger>
-            <TabsTrigger value="affiliates">Affiliates</TabsTrigger>
-            <TabsTrigger
-              value="distributions"
-              className="gap-1.5"
-              disabled={!hasAffiliateCode}
-            >
-              {!hasAffiliateCode && <LockIcon />}
-              Distributions
-            </TabsTrigger>
-          </TabsList>
+            {/* Stacks on mobile; 2-column (content + sticky sidebar) from lg up */}
+            <div className="flex flex-col gap-5 lg:flex-row">
+              <div className="min-w-0 flex-1">
+                <TabsContent value="traders">
+                  <TradersTab
+                    onCodeApplied={() => {
+                      void queryClient.invalidateQueries({
+                        queryKey: queryKeys.referrals.traderStatsAll(),
+                      })
+                      void queryClient.invalidateQueries({
+                        queryKey: queryKeys.referrals.tier(null),
+                      })
+                    }}
+                  />
+                </TabsContent>
+                <TabsContent value="affiliates">
+                  <AffiliatesTab />
+                </TabsContent>
+                <TabsContent value="distributions">
+                  <DistributionsTab />
+                </TabsContent>
+              </div>
 
-          {/* 2-column: tab content (flex-1) + sticky sidebar (w-72) */}
-          <div className="flex gap-5">
-            <div className="min-w-0 flex-1">
-              <TabsContent value="traders">
-                <TradersTab
-                  onCodeApplied={() => {
-                    // TODO: invalidate trader stats query after code applied
-                  }}
-                />
-              </TabsContent>
-              <TabsContent value="affiliates">
-                <AffiliatesTab />
-              </TabsContent>
-              <TabsContent value="distributions">
-                <DistributionsTab />
-              </TabsContent>
+              <ReferralsSidebar
+                tab={tab}
+                traderCode={traderCode}
+                affiliateCode={affiliateCode}
+                traderDiscountPct={traderStats?.discountPct ?? 5}
+                affiliateTier={affiliateTier ?? 1}
+              />
             </div>
-
-            <ReferralsSidebar
-              tab={tab}
-              traderCode={traderCode}
-              affiliateCode={affiliateCode}
-              traderDiscountPct={traderStats?.discountPct ?? 5}
-              affiliateTier={affiliateStats?.tier ?? 1}
-            />
-          </div>
-        </Tabs>
-      </div>
-    </div>
+          </Tabs>
+        }
+      />
+    </AppShell>
   )
 }

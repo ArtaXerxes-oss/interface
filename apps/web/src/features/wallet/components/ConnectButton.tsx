@@ -1,8 +1,5 @@
-import { useEffect, useMemo, useState } from "react"
-import { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit/sdk"
-import { FREIGHTER_ID } from "@creit.tech/stellar-wallets-kit/modules/freighter"
-import { HANA_ID } from "@creit.tech/stellar-wallets-kit/modules/hana"
-import { XBULL_ID } from "@creit.tech/stellar-wallets-kit/modules/xbull"
+import { useEffect, useMemo, useRef, useState } from "react"
+
 import { QRCodeSVG } from "qrcode.react"
 
 import { Button } from "@workspace/ui/components/button"
@@ -16,8 +13,12 @@ import {
 import { cn } from "@workspace/ui/lib/utils"
 
 import { createSep7ConnectUri, createSep7TransactionUri } from "../lib/sep7"
+import { useBalance } from "../hooks/useBalance"
 import { useWalletStore } from "../store/wallet-store"
 import type { ComponentProps } from "react"
+import { useKeyboardShortcut } from "@/shared/hooks/useKeyboardShortcut"
+import { useWallet } from "@/app/providers"
+import { NETWORK } from "@/app/config/network"
 
 type ConnectButtonProps = Omit<
   ComponentProps<typeof Button>,
@@ -29,6 +30,10 @@ type WalletOption = {
   name: string
   installUrl: string
 }
+
+const FREIGHTER_ID = "freighter"
+const HANA_ID = "hana"
+const XBULL_ID = "xbull"
 
 const WALLET_OPTIONS: Array<WalletOption> = [
   {
@@ -49,11 +54,23 @@ const WALLET_OPTIONS: Array<WalletOption> = [
   },
 ]
 
+async function getWalletsKit() {
+  const { StellarWalletsKit } = await import("@creit.tech/stellar-wallets-kit/sdk")
+  return StellarWalletsKit
+}
+
 export function ConnectButton({ className, ...props }: ConnectButtonProps) {
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false)
   const address = useWalletStore((state) => state.address)
   const status = useWalletStore((state) => state.status)
   const isConnecting = status === "connecting"
+
+  // Must be called unconditionally — before any early return
+  useKeyboardShortcut({
+    key: "k",
+    onKeyPress: () => setIsWalletModalOpen(true),
+    enabled: !isConnecting && status !== "connected",
+  })
 
   if (status === "connected" && address) {
     return <AccountBadge address={address} className={className as string | undefined} {...props} />
@@ -87,17 +104,89 @@ function AccountBadge({
   address: string
   className?: string
 } & Omit<ConnectButtonProps, "className">) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const balance = useBalance()
+  const { disconnect } = useWallet()
+  const isTestnet = NETWORK.name === "testnet"
+
+  useEffect(() => {
+    if (!open) return
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClick)
+    return () => document.removeEventListener("mousedown", handleClick)
+  }, [open])
+
   return (
-    <Button
-      {...props}
-      type="button"
-      variant="outline"
-      aria-label={`Connected wallet ${formatAddress(address)}`}
-      className={cn("w-full justify-start gap-2 sm:w-auto", className)}
-    >
-      <span className="size-2 rounded-full bg-emerald-500" aria-hidden="true" />
-      <span className="font-mono">{formatAddress(address)}</span>
-    </Button>
+    <div ref={ref} className="relative">
+      <Button
+        {...props}
+        type="button"
+        variant="outline"
+        aria-label={`Connected wallet ${formatAddress(address)}`}
+        aria-expanded={open}
+        className={cn("w-full justify-start gap-2 sm:w-auto", className)}
+        onClick={() => setOpen(!open)}
+      >
+        <span className="size-2 rounded-full bg-emerald-500" aria-hidden="true" />
+        <span className="font-mono">{formatAddress(address)}</span>
+      </Button>
+
+      {open && (
+        <div className="absolute inset-inline-end-0 top-full z-50 mt-1 w-72 rounded-md border bg-popover p-3 shadow-md">
+          <p className="text-xs text-muted-foreground">Connected</p>
+          <p className="mt-1 truncate font-mono text-sm" title={address}>
+            {address}
+          </p>
+
+          <div className="mt-3 rounded-md bg-muted/50 px-2 py-1.5 text-sm">
+            <span className="text-muted-foreground">XLM Balance: </span>
+            <span className="font-medium">
+              {balance ? `${balance.xlm.toFixed(2)}` : "—"}
+            </span>
+          </div>
+
+          <div className="mt-2 space-y-0.5">
+            <button
+              type="button"
+              className="w-full rounded px-2 py-1.5 text-start text-sm transition-colors hover:bg-accent"
+              onClick={() => {
+                navigator.clipboard.writeText(address)
+                setOpen(false)
+              }}
+            >
+              Copy Address
+            </button>
+
+            {isTestnet && (
+              <a
+                href="https://friendbot.stellar.org"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="block w-full rounded px-2 py-1.5 text-start text-sm transition-colors hover:bg-accent"
+              >
+                Testnet Faucet
+              </a>
+            )}
+
+            <button
+              type="button"
+              className="w-full rounded px-2 py-1.5 text-start text-sm text-destructive transition-colors hover:bg-destructive/10"
+              onClick={() => {
+                disconnect()
+                setOpen(false)
+              }}
+            >
+              Disconnect
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -124,7 +213,8 @@ function WalletModal({
 
     let cancelled = false
 
-    StellarWalletsKit.refreshSupportedWallets()
+    getWalletsKit()
+      .then((kit) => kit.refreshSupportedWallets())
       .then((wallets) => {
         if (cancelled) return
 
@@ -164,8 +254,9 @@ function WalletModal({
     setStatus("connecting")
 
     try {
-      StellarWalletsKit.setWallet(wallet.id)
-      const { address } = await StellarWalletsKit.fetchAddress()
+      const kit = await getWalletsKit()
+      kit.setWallet(wallet.id)
+      const { address } = await kit.fetchAddress()
       setConnected(address, wallet.id)
       onOpenChange(false)
     } catch {
@@ -276,7 +367,7 @@ function WalletModal({
             </a>
           </div>
 
-          <div className="flex justify-center rounded-md bg-white p-4">
+          <div className="flex justify-center rounded-md bg-popover p-4">
             <QRCodeSVG value={sep7Uri} size={168} level="M" />
           </div>
         </div>
@@ -310,7 +401,7 @@ function Spinner() {
   )
 }
 
-function formatAddress(address: string) {
+export function formatAddress(address: string) {
   if (address.length <= 12) {
     return address
   }

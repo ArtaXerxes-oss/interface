@@ -8,9 +8,14 @@
 //   - TODO: migrate to a full Selector context (Redux-style) using reselect + use-context-selector
 //     once state complexity grows — see GMX's SyntheticsStateContext pattern
 
-import { useCallback, useEffect, useMemo, useState } from "react"
-import { MARKETS, getMarketsForIndexToken } from "../data/markets"
-import { INDEX_TOKENS, STABLE_TOKENS } from "../data/tokens"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { EXECUTION_SUPPORT } from "../lib/execution-support"
+import { useMarkets } from "./useMarkets"
+import { useTokenList } from "./useTokenList"
+import { useWalletStore } from "@/features/wallet/store/wallet-store"
+import { CONTRACTS } from "@/app/config/contracts"
+import { POOL_MARKETS } from "@/features/pools/data/markets"
+import { ENV } from "@/app/config/env"
 
 export type TradeType = "Long" | "Short" | "Swap"
 export type TradeMode = "Market" | "Limit" | "Trigger"
@@ -30,6 +35,7 @@ type CollateralsByMarket = Record<string, { long?: string; short?: string }>
 type AdvancedOptions = {
   advancedDisplay: boolean    // show extra fields (slippage, execution fee, etc.)
   limitOrTPSL: boolean        // show TP/SL as part of the order form
+  slippagePct: number         // configured slippage tolerance in percent
 }
 
 export type TradeState = {
@@ -45,7 +51,7 @@ export type TradeState = {
   // Input amounts (raw string so user can type freely)
   fromAmount: string
   toAmount: string               // size input for Long/Short, receive amount for Swap
-  // Leverage (1x – 50x for Long/Short)
+  // Leverage is clamped to the selected market's source risk parameters.
   leverage: number
   // Trigger price (Limit / Stop-Loss orders)
   triggerPrice: string
@@ -56,32 +62,109 @@ export type TradeState = {
 }
 
 const STORAGE_KEY = "so4-trade-state-v2"   // bumped from v1 (collateral shape changed)
+const DEFAULT_MARKET = POOL_MARKETS[0]
+const DEFAULT_COLLATERALS = POOL_MARKETS.reduce<CollateralsByMarket>((acc, market) => {
+  acc[market.marketToken] = { long: market.longToken, short: market.shortToken }
+  return acc
+}, {})
 
 const DEFAULT_STATE: TradeState = {
   tradeType: "Long",
   tradeMode: "Market",
-  fromTokenAddress: "USDC",
-  toTokenAddress: "BTC",
-  marketAddress: "BTC-BTC-USDC",
-  collaterals: {
-    "BTC-BTC-USDC": { long: "BTC", short: "USDC" },
-    "ETH-ETH-USDC": { long: "ETH", short: "USDC" },
-    "XLM-XLM-USDC": { long: "XLM", short: "USDC" },
-  },
+  fromTokenAddress: CONTRACTS.tokens.tusdc,
+  toTokenAddress: DEFAULT_MARKET.indexToken,
+  marketAddress: DEFAULT_MARKET.marketToken,
+  collaterals: DEFAULT_COLLATERALS,
   fromAmount: "",
   toAmount: "",
   leverage: 10,
   triggerPrice: "",
   sidecarOrders: [],
-  advanced: { advancedDisplay: false, limitOrTPSL: false },
+  advanced: { advancedDisplay: false, limitOrTPSL: false, slippagePct: 0.3 },
 }
 
 function loadFromStorage(): TradeState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    return raw ? (JSON.parse(raw) as TradeState) : DEFAULT_STATE
+    if (!raw) return DEFAULT_STATE
+
+    const parsed = JSON.parse(raw) as Partial<TradeState>
+    return normalizeTradeState({
+      ...DEFAULT_STATE,
+      ...parsed,
+      collaterals: {
+        ...DEFAULT_COLLATERALS,
+        ...(parsed.collaterals ?? {}),
+      },
+      advanced: {
+        ...DEFAULT_STATE.advanced,
+        ...(parsed.advanced ?? {}),
+      },
+    })
   } catch {
     return DEFAULT_STATE
+  }
+}
+
+function normalizeTradeState(state: TradeState): TradeState {
+  const market = POOL_MARKETS.find((entry) => entry.marketToken === state.marketAddress)
+  if (market) {
+    // Market is still valid; revalidate collateral selections for this market
+    const collateral = state.collaterals[market.marketToken]
+    const isLong = state.tradeType === "Long"
+    const isShort = state.tradeType === "Short"
+
+    // Clear incompatible amounts/triggers when collateral doesn't match market config
+    if (
+      (isLong && collateral.long && collateral.long !== market.longToken) ||
+      (isShort && collateral.short && collateral.short !== market.shortToken)
+    ) {
+      return {
+        ...state,
+        collaterals: {
+          ...state.collaterals,
+          [market.marketToken]: {
+            long: market.longToken,
+            short: market.shortToken,
+          },
+        },
+        fromAmount: "",
+        triggerPrice: "",
+        sidecarOrders: [],
+      }
+    }
+
+    return {
+      ...state,
+      collaterals: {
+        ...state.collaterals,
+        [market.marketToken]: {
+          long: market.longToken,
+          short: market.shortToken,
+        },
+      },
+      sidecarOrders: EXECUTION_SUPPORT.attachedTriggers ? state.sidecarOrders : [],
+      advanced: {
+        ...state.advanced,
+        limitOrTPSL: EXECUTION_SUPPORT.attachedTriggers && state.advanced.limitOrTPSL,
+      },
+    }
+  }
+
+  // Market is invalid — reset to default and clear draft amounts
+  return {
+    ...state,
+    fromTokenAddress: CONTRACTS.tokens.tusdc,
+    toTokenAddress: DEFAULT_MARKET.indexToken,
+    marketAddress: DEFAULT_MARKET.marketToken,
+    collaterals: DEFAULT_COLLATERALS,
+    fromAmount: "",
+    triggerPrice: "",
+    sidecarOrders: [],
+    advanced: {
+      ...state.advanced,
+      limitOrTPSL: false,
+    },
   }
 }
 
@@ -94,12 +177,36 @@ function saveToStorage(state: TradeState) {
 }
 
 export function useTradeState() {
+  const { markets, getMarketsForIndexToken } = useMarkets()
+  const { indexTokens, stableTokens } = useTokenList()
+  const account = useWalletStore((s) => s.address)
   const [state, setState] = useState<TradeState>(loadFromStorage)
+  const prevAccountRef = useRef(account)
+  const prevNetworkRef = useRef(ENV.NETWORK)
 
   // Persist every change
   useEffect(() => {
     saveToStorage(state)
   }, [state])
+
+  // Clear stale approvals and draft amounts when account/network changes
+  useEffect(() => {
+    const accountChanged = prevAccountRef.current !== account
+    const networkChanged = prevNetworkRef.current !== ENV.NETWORK
+
+    if (accountChanged || networkChanged) {
+      // Clear amounts but preserve market/type selections
+      setState((prev) => ({
+        ...prev,
+        fromAmount: "",
+        triggerPrice: "",
+        sidecarOrders: [],
+      }))
+    }
+
+    prevAccountRef.current = account
+    prevNetworkRef.current = ENV.NETWORK
+  }, [account])
 
   const update = useCallback((patch: Partial<TradeState>) => {
     setState((prev) => ({ ...prev, ...patch }))
@@ -131,7 +238,7 @@ export function useTradeState() {
   // Markets available for the selected index token
   const availableMarkets = useMemo(
     () => getMarketsForIndexToken(state.toTokenAddress),
-    [state.toTokenAddress],
+    [getMarketsForIndexToken, state.toTokenAddress],
   )
 
   // When trade type changes, reset mode if unavailable
@@ -149,16 +256,16 @@ export function useTradeState() {
   const collateralAddress = useMemo(() => {
     const marketCollaterals = state.collaterals[state.marketAddress]
     return tradeFlags.isLong
-      ? (marketCollaterals.long ?? "USDC")
-      : (marketCollaterals.short ?? "USDC")
+      ? marketCollaterals.long
+      : marketCollaterals.short
   }, [state.collaterals, state.marketAddress, tradeFlags.isLong])
 
   // When index token changes, pick first available market and set default collaterals
   const setToTokenAddress = useCallback(
     (address: string) => {
-      const markets = getMarketsForIndexToken(address)
-      const marketAddress = markets[0]?.address ?? state.marketAddress
-      const market = markets[0]
+      const marketsList = getMarketsForIndexToken(address)
+      const market = marketsList[0]
+      const marketAddress = market.address
 
       const collaterals = { ...state.collaterals }
       collaterals[market.address] = {
@@ -168,7 +275,7 @@ export function useTradeState() {
 
       update({ toTokenAddress: address, marketAddress, collaterals })
     },
-    [state.marketAddress, state.collaterals, update],
+    [state.marketAddress, state.collaterals, getMarketsForIndexToken, update],
   )
 
   // Set collateral for the active market + direction
@@ -216,7 +323,10 @@ export function useTradeState() {
   // TP/SL sidecar order setters
   // TODO: wire into createIncreaseOrder — pass sidecarOrders as attached decrease orders
   const addSidecarOrder = useCallback(
-    (order: SidecarOrder) => update({ sidecarOrders: [...state.sidecarOrders, order] }),
+    (order: SidecarOrder) => {
+      if (!EXECUTION_SUPPORT.attachedTriggers) return
+      update({ sidecarOrders: [...state.sidecarOrders, order] })
+    },
     [state.sidecarOrders, update],
   )
   const removeSidecarOrder = useCallback(
@@ -232,9 +342,9 @@ export function useTradeState() {
     tradeFlags,
     availableTradeModes,
     availableMarkets,
-    indexTokens: INDEX_TOKENS,
-    stableTokens: STABLE_TOKENS,
-    allMarkets: MARKETS,
+    indexTokens,
+    stableTokens,
+    allMarkets: markets,
     // Setters
     setTradeType,
     setTradeMode: (tradeMode: TradeMode) => update({ tradeMode }),
@@ -247,7 +357,17 @@ export function useTradeState() {
     setLeverage: (leverage: number) => update({ leverage }),
     setTriggerPrice: (triggerPrice: string) => update({ triggerPrice }),
     setAdvanced: (advanced: Partial<AdvancedOptions>) =>
-      update({ advanced: { ...state.advanced, ...advanced } }),
+      update({
+        advanced: {
+          ...state.advanced,
+          ...advanced,
+          limitOrTPSL: EXECUTION_SUPPORT.attachedTriggers
+            ? (advanced.limitOrTPSL ?? state.advanced.limitOrTPSL)
+            : false,
+        },
+      }),
+    setSlippagePct: (slippagePct: number) =>
+      update({ advanced: { ...state.advanced, slippagePct } }),
     switchTokens,
     setActivePosition,
     // Sidecar TP/SL

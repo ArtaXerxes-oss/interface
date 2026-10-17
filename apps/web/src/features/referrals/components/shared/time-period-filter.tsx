@@ -1,3 +1,4 @@
+import { Button } from "@workspace/ui/components/button"
 import { cn } from "@workspace/ui/lib/utils"
 import type { TimePeriod } from "../../hooks/use-referrals-data"
 
@@ -16,20 +17,27 @@ type Props = {
 
 export function TimePeriodFilter({ value, onChange }: Props) {
   return (
-    <div className="flex items-center gap-0.5 rounded-lg border border-border bg-muted/30 p-0.5">
+    <div
+      role="group"
+      aria-label="Time period"
+      className="flex items-center gap-0.5 rounded-lg border border-border bg-muted/30 p-0.5"
+    >
       {PERIODS.map((p) => (
-        <button
+        <Button
           key={p.value}
+          variant="ghost"
+          size="sm"
+          aria-pressed={value === p.value}
           onClick={() => onChange(p.value)}
           className={cn(
-            "rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors",
+            "rounded-md px-2.5 py-1 text-11 font-medium transition-colors",
             value === p.value
               ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground",
+              : "text-muted-foreground",
           )}
         >
           {p.label}
-        </button>
+        </Button>
       ))}
     </div>
   )

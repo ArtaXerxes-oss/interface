@@ -7,12 +7,13 @@ import {
 } from "@workspace/ui/components/tabs"
 import { Input } from "@workspace/ui/components/input"
 import { Button } from "@workspace/ui/components/button"
-import { Slider } from "@workspace/ui/components/slider"
 import { Separator } from "@workspace/ui/components/separator"
-import { Badge } from "@workspace/ui/components/badge"
-import { useTradeState } from "../../hooks/useTradeState"
+import { Numeric } from "@workspace/ui/components/numeric"
+import { toast } from "@workspace/ui/components/toast"
 import { useTokenPrices } from "../../hooks/useTokenPrices"
 import { useTradeFees } from "../../hooks/useTradeFees"
+import { useMarketRiskParams } from "../../hooks/useMarketRiskParams"
+import { usePositions } from "../../hooks/usePositions"
 import { useTokenBalances } from "../../../wallet/hooks/useTokenBalances"
 import {
   estimateLiquidationPrice,
@@ -22,12 +23,26 @@ import {
 import { PriceFallbackBanner } from "../PriceFallbackBanner"
 import { TradeInfoRows } from "./TradeInfoRows"
 import { ConfirmationDialog } from "./ConfirmationDialog"
-import type { TradeType } from "../../hooks/useTradeState"
+import { ApplyReferralCodePrompt } from "./ApplyReferralCodePrompt"
+import { LeverageSlider } from "./LeverageSlider"
+import type { TradeMode, TradeType, useTradeState } from "../../hooks/useTradeState"
+import { NumberInput } from "@/shared/components/NumberInput"
+import { useWalletStore } from "@/features/wallet/store/wallet-store"
+import { TokenIcon } from "@/shared/components/TokenIcon"
+import { formatAddress } from "@/shared/lib/format"
+import {
+  validateAmount,
+  validateBalance,
+  validatePrice,
+} from "@/lib/input-validation"
 
 export function TradePanel() {
   const trade = useTradeState()
   const { getMidPrice, isPriceFallback } = useTokenPrices()
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [priceValidationError, setPriceValidationError] = useState<string | null>(null)
+  const [previousMode, setPreviousMode] = useState<TradeMode>(trade.tradeMode)
+  const account = useWalletStore((state) => state.address)
 
   const {
     tradeType,
@@ -43,7 +58,24 @@ export function TradePanel() {
     setTradeMode,
     setLeverage,
     setTriggerPrice,
+    advanced,
   } = trade
+
+  const marketRisk = useMarketRiskParams(marketAddress)
+  const { data: positions = [] } = usePositions()
+  const existingExposure = positions.find(
+    (position) => position.marketAddress === marketAddress && position.isLong === tradeFlags.isLong,
+  )
+  const maxLeverage = marketRisk.params?.maxLeverage ?? 1
+  const boundedLeverage = marketRisk.params
+    ? clampLeverage(leverage, maxLeverage)
+    : 0
+
+  useEffect(() => {
+    if (marketRisk.state === "available" && leverage > maxLeverage) {
+      setLeverage(maxLeverage)
+    }
+  }, [leverage, maxLeverage, marketRisk.state, setLeverage])
 
   const entryPrice = getMidPrice(toTokenAddress)
   const collateralUsd =
@@ -59,15 +91,29 @@ export function TradePanel() {
     tradeType,
   })
 
-  const liquidationPrice = useMemo(() => {
-    if (!tradeFlags.isPosition || sizeUsd <= 0 || entryPrice <= 0) return 0
-    return estimateLiquidationPrice({
-      entryPrice,
+  const positionEstimate = useMemo(() => {
+    if (!tradeFlags.isPosition || !marketRisk.params) return null
+    return estimatePositionRisk({
       collateralUsd,
-      sizeUsd,
+      leverage: boundedLeverage,
+      entryPrice,
       isLong: tradeFlags.isLong,
+      risk: marketRisk.params,
+      existing: existingExposure,
     })
-  }, [tradeFlags, sizeUsd, entryPrice, collateralUsd])
+  }, [boundedLeverage, collateralUsd, entryPrice, existingExposure, marketRisk.params, tradeFlags])
+
+  const priceStale = isStale(toTokenAddress)
+  const toTokenLabel = formatTokenLabel(toTokenAddress)
+  const canTrade = Boolean(account) && sizeUsd > 0 && !priceStale &&
+    (tradeFlags.isSwap || marketRisk.state === "available")
+
+  // Detect mode changes and notify user about discarded fields
+  useEffect(() => {
+    if (tradeMode === previousMode) return
+
+    const wasPriceMode = previousMode === "Limit" || previousMode === "Trigger"
+    const isPriceMode = tradeMode === "Limit" || tradeMode === "Trigger"
 
   // Order submission is disabled when live prices are unavailable to prevent
   // trades being submitted at stale hard-coded dummy prices.
@@ -102,21 +148,15 @@ export function TradePanel() {
         </TabsList>
 
         {/* ── Order mode: Market / Limit / Trigger ─────────────────── */}
-        <div className="mt-3 flex gap-1">
-          {availableTradeModes.map((mode) => (
-            <button
-              key={mode}
-              onClick={() => setTradeMode(mode)}
-              className={`rounded px-2 py-0.5 text-xs transition-colors ${
-                tradeMode === mode
-                  ? "bg-muted font-medium text-foreground"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              {mode}
-            </button>
-          ))}
-        </div>
+        <Tabs value={tradeMode} onValueChange={(v) => setTradeMode(v as TradeMode)}>
+          <TabsList variant="line" className="w-full transition-all duration-base">
+            {availableTradeModes.map((mode) => (
+              <TabsTrigger key={mode} value={mode} className="flex-1 transition-colors duration-fast">
+                {mode}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
 
         <TabsContent value="Long" className="mt-0">
           <TradeInputs trade={trade} />
@@ -131,51 +171,59 @@ export function TradePanel() {
 
       {/* ── Trigger price input (Limit / Stop-Loss only) ─────────── */}
       {(tradeMode === "Limit" || tradeMode === "Trigger") && (
-        <div className="space-y-1">
+        <div className="space-y-1 animate-in fade-in duration-base">
           <label className="text-xs text-muted-foreground">
             {tradeMode === "Trigger" ? "Trigger price" : "Limit price"}
           </label>
           <div className="relative">
             <Input
-              type="number"
+              type="text"
+              inputMode="decimal"
               placeholder="0.00"
-              className="pr-12 font-mono text-sm"
-              onChange={(e) => setTriggerPrice(e.target.value)}
+              className="pe-12 font-mono text-sm"
+              onChange={(e) => {
+                const value = e.target.value
+                setTriggerPrice(value)
+                if (value) {
+                  const validation = validatePrice(value)
+                  setPriceValidationError(validation.error)
+                } else {
+                  setPriceValidationError(null)
+                }
+              }}
             />
             <span className="absolute top-1/2 right-3 -translate-y-1/2 text-xs text-muted-foreground">
               USD
             </span>
           </div>
+          {priceValidationError && (
+            <p className="text-xs text-red-500">{priceValidationError}</p>
+          )}
         </div>
       )}
 
       {/* ── Leverage slider (positions only) ─────────────────────── */}
       {tradeFlags.isPosition && (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-muted-foreground">Leverage</span>
-            <Badge variant="secondary">{leverage}×</Badge>
+        marketRisk.state === "available" ? (
+          <div className="animate-in fade-in duration-base">
+            <LeverageSlider
+              value={boundedLeverage}
+              max={maxLeverage}
+              onChange={setLeverage}
+            />
           </div>
-          <Slider
-            min={1}
-            max={50}
-            step={0.5}
-            value={[leverage]}
-            onValueChange={(v) => setLeverage(Array.isArray(v) ? v[0] : v)}
-            className="w-full"
-          />
-          <div className="flex justify-between text-xs text-muted-foreground">
-            <span>1×</span>
-            <span>50×</span>
-          </div>
-        </div>
+        ) : (
+          <p role="status" className="text-xs text-muted-foreground">
+            Leverage unavailable until current market risk parameters are available.
+          </p>
+        )
       )}
 
       {/* ── Size summary ─────────────────────────────────────────── */}
       {tradeFlags.isPosition && sizeUsd > 0 && (
         <div className="flex items-center justify-between rounded-md bg-muted/40 px-3 py-2 text-xs">
-          <span className="text-muted-foreground">Position size</span>
-          <span className="font-mono font-medium">{formatUsd(sizeUsd)}</span>
+          <span className="text-muted-foreground">Position size estimate</span>
+          <Numeric value={sizeUsd} format="usd" role="neutral" className="font-medium" />
         </div>
       )}
 
@@ -190,9 +238,65 @@ export function TradePanel() {
         leverage={leverage}
         fromAmount={fromAmount}
         sizeUsd={sizeUsd}
+        riskParams={marketRisk.params}
+        existingExposure={existingExposure}
       />
 
-      {/* ── Submit button ─────────────────────────────────────────── */}
+      {/* ── Advanced options ──────────────────────────────────────── */}
+      <div className="rounded-xl border border-border bg-muted/40 p-3 text-sm">
+        <div className="flex items-center justify-between">
+          <span className="font-medium">Advanced options</span>
+          <button
+            type="button"
+            className="text-xs font-medium text-primary hover:text-primary/80"
+            onClick={() => trade.setAdvanced({ advancedDisplay: !advanced.advancedDisplay })}
+          >
+            {advanced.advancedDisplay ? "Hide" : "Show"}
+          </button>
+        </div>
+        {advanced.advancedDisplay && (
+          <div className="mt-3 space-y-3">
+            <div className="space-y-1">
+              <label className="text-xs text-muted-foreground">Slippage tolerance</label>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={0}
+                  max={10}
+                  step={0.1}
+                  value={advanced.slippagePct}
+                  onChange={(e) => trade.setSlippagePct(Number(e.target.value))}
+                  className="pe-10 font-mono text-sm"
+                />
+                <span className="text-xs text-muted-foreground">%</span>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              This sets the maximum allowable slippage for the order. Orders will revert if the fill price exceeds this threshold.
+            </p>
+            {!EXECUTION_SUPPORT.attachedTriggers && (
+              <p role="status" className="text-xs text-muted-foreground">
+                Take-profit and stop-loss attachments are unavailable for this execution venue.
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Wallet disconnected state ──────────────────────────────── */}
+      {!account && (
+        <div className="rounded-lg border border-dashed border-border bg-muted/20 px-4 py-3 text-center text-xs text-muted-foreground">
+          Connect wallet to trade
+        </div>
+      )}
+
+      {/* ── Price stale warning ────────────────────────────────────── */}
+      {priceStale && (
+        <div className="flex items-center justify-center gap-1.5 rounded-lg border border-amber-500/20 bg-amber-500/5 px-4 py-2 text-xs text-amber-500">
+          <span>Waiting for price update…</span>
+        </div>
+      )}
+
       <Button
         className={`mt-1 w-full font-medium ${
           tradeFlags.isLong
@@ -201,7 +305,7 @@ export function TradePanel() {
               ? "bg-red-600 text-white hover:bg-red-700"
               : ""
         }`}
-        disabled={!canTrade}
+        disabled={!canTrade || priceValidationError !== null}
         onClick={() => setConfirmOpen(true)}
         aria-disabled={isPriceFallback}
       >
@@ -217,9 +321,11 @@ export function TradePanel() {
         tradeState={trade}
         sizeUsd={sizeUsd}
         entryPrice={entryPrice}
-        liquidationPrice={liquidationPrice}
+        liquidationPrice={positionEstimate?.liquidationPrice ?? null}
         totalFeesUsd={fees.totalFeesUsd}
       />
+
+      <ApplyReferralCodePrompt account={account} />
     </div>
   )
 }
@@ -237,21 +343,39 @@ function TradeInputs({ trade }: { trade: ReturnType<typeof useTradeState> }) {
   } = trade
   const { getMidPrice } = useTokenPrices()
   const { data: balances } = useTokenBalances()
+  const [amountValidationError, setAmountValidationError] = useState<string | null>(null)
 
-  const fromPrice = getMidPrice(fromTokenAddress)
+  const activeInputTokenAddress = tradeFlags.isSwap ? fromTokenAddress : collateralAddress!
+  const fromPrice = getMidPrice(activeInputTokenAddress)
   const fromUsd = parseFloat(fromAmount || "0") * fromPrice
-  const walletBalance = balances?.[fromTokenAddress]
+  const walletBalance = balances?.[activeInputTokenAddress]
+  const fromTokenLabel = formatTokenLabel(activeInputTokenAddress)
+  const toTokenLabel = formatTokenLabel(toTokenAddress)
+
+  const handleAmountChange = (value: string) => {
+    setFromAmount(value)
+    if (value) {
+      const validation = validateAmount(value, { maxAmount: walletBalance })
+      setAmountValidationError(validation.error)
+      if (!validation.error && walletBalance !== undefined) {
+        const balance = validateBalance(parseFloat(value), walletBalance)
+        setAmountValidationError(balance.error)
+      }
+    } else {
+      setAmountValidationError(null)
+    }
+  }
 
   return (
-    <div className="mt-3 space-y-2">
+    <div className="mt-3 min-w-0 space-y-2">
       {/* Pay */}
       <div className="space-y-1">
-        <div className="flex items-center justify-between">
+        <div className="flex min-w-0 items-center justify-between gap-2">
           <label className="text-xs text-muted-foreground">
             {tradeFlags.isSwap ? "Pay" : "Collateral"}
           </label>
           {walletBalance !== undefined && (
-            <span className="text-xs text-muted-foreground">
+            <span className="min-w-0 text-right text-xs text-muted-foreground">
               Balance:{" "}
               <span className="font-mono font-medium text-foreground">
                 {walletBalance.toLocaleString(undefined, {
@@ -300,4 +424,8 @@ function TradeInputs({ trade }: { trade: ReturnType<typeof useTradeState> }) {
       </div>
     </div>
   )
+}
+
+function formatTokenLabel(value: string): string {
+  return getToken(value)?.symbol ?? formatAddress(value)
 }

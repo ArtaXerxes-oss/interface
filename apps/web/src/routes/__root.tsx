@@ -1,15 +1,28 @@
-import { HeadContent, Scripts, createRootRoute } from "@tanstack/react-router"
-import { Toaster } from "sonner"
+import {
+  HeadContent,
+  Link,
+  Outlet,
+  Scripts,
+  createRootRoute,
+} from "@tanstack/react-router"
+import { ToastProvider } from "@workspace/ui/components/toast"
+import { DensityProvider } from "@workspace/ui/components/density-provider"
 import appCss from "@workspace/ui/globals.css?url"
 import { AppProviders } from "../app/providers"
-
+import { RouteAnnouncer } from "../shared/components/RouteAnnouncer"
 
 // Update this to your production domain before going live.
-const SITE_URL = "https://so4.market"
-const SITE_NAME = "so4.market"
-const TITLE = "SO4 — On-chain perpetuals"
+const SITE_URL = "https://levee.market"
+const SITE_NAME = "levee.market"
+const TITLE = "Levee · On-chain perpetuals"
 const DESCRIPTION =
   "A unified-liquidity perp DEX. Deep books, sub-second matching, and self-custodied risk — built for traders who care where their fills come from."
+// TODO(GF3-003): apply the dot-separator convention (no em dashes as list
+// separators, "." between clauses — e.g. "Trade · Long/Short") through the
+// rest of the landing copy pass. This file's list-style SEO strings (title,
+// OG/Twitter image alt) are fixed now since they're the page's actual SEO
+// surface; DESCRIPTION's dash is a genuine sentence break, not a list
+// separator, and stays.
 const OG_IMAGE = `${SITE_URL}/og-image.svg`
 const TWITTER_HANDLE = "@so4market"
 
@@ -20,7 +33,7 @@ const JSON_LD = {
     {
       "@type": "WebApplication",
       "@id": `${SITE_URL}/#app`,
-      name: "SO4",
+      name: "Levee",
       url: SITE_URL,
       description: DESCRIPTION,
       applicationCategory: "FinanceApplication",
@@ -34,7 +47,7 @@ const JSON_LD = {
     {
       "@type": "Organization",
       "@id": `${SITE_URL}/#org`,
-      name: "so4 labs",
+      name: "Levee Labs",
       url: SITE_URL,
       logo: `${SITE_URL}/favicon.svg`,
       sameAs: [
@@ -67,9 +80,12 @@ export const Route = createRootRoute({
         content:
           "perpetual DEX, on-chain perps, crypto derivatives, DeFi trading, BTC perp, ETH perp, low fee perp, self-custodied trading, unified liquidity",
       },
-      { name: "author", content: "so4 labs" },
+      { name: "author", content: "Levee Labs" },
       { name: "robots", content: "index, follow, max-image-preview:large" },
-      { name: "theme-color", content: "#0A0B0D" },
+      // ds-allow: <meta content> requires a literal color string for
+      // mobile browser chrome tinting — can't reference a CSS custom
+      // property here, so it can't be sourced from the token system.
+      { name: "theme-color", content: "#111126" },
       { name: "color-scheme", content: "dark light" },
       // Prevents phone number detection on iOS / Android WebView
       { name: "format-detection", content: "telephone=no" },
@@ -87,7 +103,8 @@ export const Route = createRootRoute({
       { property: "og:image:type", content: "image/svg+xml" },
       {
         property: "og:image:alt",
-        content: "SO4 — On-chain perpetuals DEX · $8.42B 24h volume · 184 markets",
+        content:
+          "Levee · On-chain perpetuals DEX · unified liquidity for modern markets",
       },
 
       // ── Twitter / X Card ────────────────────────────────────────
@@ -99,7 +116,8 @@ export const Route = createRootRoute({
       { name: "twitter:image", content: OG_IMAGE },
       {
         name: "twitter:image:alt",
-        content: "SO4 — On-chain perpetuals DEX · $8.42B 24h volume · 184 markets",
+        content:
+          "Levee · On-chain perpetuals DEX · unified liquidity for modern markets",
       },
     ],
     links: [
@@ -112,12 +130,24 @@ export const Route = createRootRoute({
       // ── Canonical ───────────────────────────────────────────────
       { rel: "canonical", href: SITE_URL },
 
-      // ── Fonts ───────────────────────────────────────────────────
-      { rel: "preconnect", href: "https://fonts.googleapis.com" },
-      { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
+      // ── DNS Prefetch ────────────────────────────────────────────
+      { rel: "dns-prefetch", href: "//indexer.example.com" },
+      { rel: "dns-prefetch", href: "//rpc.example.com" },
+
+      // ── Preload Critical Assets ─────────────────────────────────
       {
-        rel: "stylesheet",
-        href: "https://fonts.googleapis.com/css2?family=Geist+Mono:wght@300;400;500;600&display=swap",
+        rel: "preload",
+        as: "font",
+        href: "/fonts/inter-400.woff2",
+        type: "font/woff2",
+        crossOrigin: "anonymous",
+      },
+      {
+        rel: "preload",
+        as: "font",
+        href: "/fonts/inter-600.woff2",
+        type: "font/woff2",
+        crossOrigin: "anonymous",
       },
 
       // ── App CSS ─────────────────────────────────────────────────
@@ -127,11 +157,30 @@ export const Route = createRootRoute({
   notFoundComponent: () => (
     <main className="mx-auto max-w-330 p-4 pt-16">
       <h1 className="text-2xl font-medium text-foreground">404</h1>
-      <p className="mt-2 text-muted-foreground">The requested page could not be found.</p>
+      <p className="mt-2 text-muted-foreground">
+        The requested page could not be found.
+      </p>
+      <div className="mt-4">
+        <Link to="/" className="text-primary hover:underline">
+          Go back home
+        </Link>
+      </div>
     </main>
   ),
+  component: RootComponent,
   shellComponent: RootDocument,
 })
+
+// Sits above every route so the post-navigation focus/announcement handoff
+// (DS-078) is installed exactly once, inside router context.
+function RootComponent() {
+  return (
+    <>
+      <RouteAnnouncer />
+      <Outlet />
+    </>
+  )
+}
 
 // Minified blocking script — runs synchronously before first paint.
 // Reads localStorage and sets dark/light class on <html> so CSS variables
@@ -156,10 +205,13 @@ function RootDocument({ children }: { children: React.ReactNode }) {
         />
       </head>
       <body>
-        <AppProviders>
-          {children}
-          <Toaster richColors position="bottom-right" />
-        </AppProviders>
+        <DensityProvider>
+          <AppProviders>
+            <ToastProvider>
+              {children}
+            </ToastProvider>
+          </AppProviders>
+        </DensityProvider>
         <Scripts />
       </body>
     </html>

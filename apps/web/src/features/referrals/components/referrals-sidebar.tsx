@@ -1,8 +1,9 @@
+import { Card, CardContent } from "@workspace/ui/components/card"
 import { cn } from "@workspace/ui/lib/utils"
 import { getTierByLevel } from "../data/tiers"
 import { CodeDisplay } from "./shared/code-display"
-import { FaqAccordion  } from "./shared/faq-accordion"
-import type {FaqItem} from "./shared/faq-accordion";
+import { FaqAccordion } from "./shared/faq-accordion"
+import type { FaqItem } from "./shared/faq-accordion"
 
 const TRADER_FAQS: Array<FaqItem> = [
   {
@@ -50,7 +51,7 @@ function ExternalLink({ href, children }: ExternalLinkProps) {
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="flex items-center justify-between py-2.5 text-[12px] text-muted-foreground transition-colors hover:text-foreground"
+      className="flex items-center justify-between py-2.5 text-xs text-muted-foreground transition-colors hover:text-foreground"
     >
       {children}
       <svg
@@ -92,7 +93,7 @@ export function ReferralsSidebar({
   const faqs = isAffiliate ? AFFILIATE_FAQS : TRADER_FAQS
 
   return (
-    <aside className="flex w-72 shrink-0 flex-col gap-4 self-start lg:sticky lg:top-20">
+    <aside className="flex w-full shrink-0 flex-col gap-4 self-start lg:sticky lg:top-20 lg:w-72">
       {/* Code section */}
       {activeCode ? (
         <>
@@ -109,30 +110,31 @@ export function ReferralsSidebar({
                 <div className="mb-2 flex items-center gap-2">
                   <span
                     className={cn(
-                      "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1",
+                      "inline-flex items-center rounded-full px-2 py-0.5 text-10 font-semibold ring-1",
                       tier.colorClass,
-                      tier.ringClass,
+                      tier.ringClass
                     )}
                   >
                     {tier.label}
                   </span>
-                  <span className="text-[11px] text-muted-foreground">
+                  <span className="text-11 text-muted-foreground">
                     Tier {tier.level}
                   </span>
                 </div>
-                <p className="text-[12px] font-semibold text-foreground">
+                <p className="text-xs font-semibold text-foreground">
                   {tier.affiliateCommissionPct}% commission on referral fees
                 </p>
-                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                <p className="mt-0.5 text-11 text-muted-foreground">
                   Referees receive a {tier.traderDiscountPct}% fee discount.
                 </p>
               </>
             ) : (
               <>
-                <p className="text-[12px] font-semibold text-green-400">
-                  You're receiving a {traderDiscountPct}% discount on your trades!
+                <p className="text-xs font-semibold text-green-400">
+                  You're receiving a {traderDiscountPct}% discount on your
+                  trades!
                 </p>
-                <p className="mt-1 text-[11px] text-muted-foreground">
+                <p className="mt-1 text-11 text-muted-foreground">
                   The reduced rate applies to every open and close fee.
                 </p>
               </>
@@ -141,10 +143,10 @@ export function ReferralsSidebar({
         </>
       ) : (
         <div className="rounded-xl border border-dashed border-border bg-muted/10 p-4 text-center">
-          <p className="text-[12px] font-medium text-muted-foreground">
+          <p className="text-xs font-medium text-muted-foreground">
             {isAffiliate ? "No affiliate code yet" : "No referral code active"}
           </p>
-          <p className="mt-1 text-[11px] text-muted-foreground/60">
+          <p className="mt-1 text-11 text-muted-foreground/60">
             {isAffiliate
               ? "Register a code to start earning commissions"
               : "Enter a code to get a fee discount"}
@@ -153,15 +155,17 @@ export function ReferralsSidebar({
       )}
 
       {/* Quick links */}
-      <div className="rounded-xl border border-border bg-card px-4 py-2">
-        <div className="divide-y divide-border/50">
-          {/* TODO: Replace # with actual docs URLs when documentation is published */}
-          <ExternalLink href="#">How it works</ExternalLink>
-          <ExternalLink href="#">Claiming rewards</ExternalLink>
-          <ExternalLink href="#">Tiers</ExternalLink>
-          <ExternalLink href="#">Transferring a referral code</ExternalLink>
-        </div>
-      </div>
+      <Card>
+        <CardContent className="px-4 py-2">
+          <div className="divide-y divide-border/50">
+            {/* TODO: Replace # with actual docs URLs when documentation is published */}
+            <ExternalLink href="#">How it works</ExternalLink>
+            <ExternalLink href="#">Claiming rewards</ExternalLink>
+            <ExternalLink href="#">Tiers</ExternalLink>
+            <ExternalLink href="#">Transferring a referral code</ExternalLink>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* FAQ */}
       <FaqAccordion items={faqs} />

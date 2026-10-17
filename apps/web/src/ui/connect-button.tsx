@@ -1,71 +1,31 @@
 import { useEffect, useRef, useState } from "react"
 import { Button } from "@workspace/ui/components/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@workspace/ui/components/dialog"
 import { useWallet } from "@/app/providers"
 
 function shortenAddress(address: string): string {
   return `${address.slice(0, 6)}…`
 }
 
-export function ConnectButton({ compactMobile = false }: { compactMobile?: boolean }) {
+export function ConnectButton({
+  compactMobile = false,
+}: {
+  compactMobile?: boolean
+}) {
   const { address, status, connect, disconnect } = useWallet()
   const [open, setOpen] = useState(false)
   const [walletModalOpen, setWalletModalOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
-  const modalRef = useRef<HTMLDivElement>(null)
   const menuItemRefs = useRef<Array<HTMLButtonElement | null>>([])
-  const connectTriggerRef = useRef<HTMLButtonElement>(null)
   const dropdownId = "wallet-account-menu"
 
-  useEffect(() => {
-    if (!walletModalOpen) {
-      return
-    }
-
-    const focusableSelector =
-      'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        event.preventDefault()
-        setWalletModalOpen(false)
-        return
-      }
-
-      if (event.key !== "Tab" || !modalRef.current) {
-        return
-      }
-
-      const focusable = Array.from(
-        modalRef.current.querySelectorAll<HTMLElement>(focusableSelector),
-      )
-      if (focusable.length === 0) {
-        return
-      }
-
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
-      const active = document.activeElement as HTMLElement | null
-
-      if (event.shiftKey && active === first) {
-        event.preventDefault()
-        last.focus()
-      } else if (!event.shiftKey && active === last) {
-        event.preventDefault()
-        first.focus()
-      }
-    }
-
-    document.addEventListener("keydown", handleKeyDown)
-
-    const firstFocusable = modalRef.current?.querySelector<HTMLElement>(focusableSelector)
-    firstFocusable?.focus()
-
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown)
-      connectTriggerRef.current?.focus()
-    }
-  }, [walletModalOpen])
-
+  // Close the account dropdown when a click lands outside it
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) {
@@ -76,6 +36,9 @@ export function ConnectButton({ compactMobile = false }: { compactMobile?: boole
     return () => document.removeEventListener("mousedown", handleClickOutside)
   }, [])
 
+  // Focus the first menu item when the dropdown opens; restore focus when it
+  // closes (base-ui Dialog handles this for the modal, so we only need it here
+  // for the non-modal account dropdown).
   useEffect(() => {
     if (open) {
       menuItemRefs.current[0]?.focus()
@@ -84,21 +47,27 @@ export function ConnectButton({ compactMobile = false }: { compactMobile?: boole
 
     const active = document.activeElement as HTMLElement | null
     if (active?.getAttribute("role") === "menuitem") {
-      ;(document.getElementById("wallet-account-trigger") as HTMLButtonElement | null)?.focus()
+      ;(
+        document.getElementById(
+          "wallet-account-trigger"
+        ) as HTMLButtonElement | null
+      )?.focus()
     }
   }, [open])
+
+  // ── Connecting state ────────────────────────────────────────────────────────
 
   if (status === "connecting") {
     return (
       <Button
         disabled
         variant="outline"
-        className="h-9.5 px-4 text-[13.5px]"
+        className="h-9.5 px-4 text-13-5"
         aria-live="polite"
         aria-label="Connecting wallet"
       >
         <span
-          className="mr-2 inline-block size-3 animate-spin rounded-full border-2 border-current border-t-transparent"
+          className="me-2 inline-block size-3 animate-spin rounded-full border-2 border-current border-t-transparent"
           aria-hidden="true"
         />
         <span role="status">Connecting</span>
@@ -106,42 +75,54 @@ export function ConnectButton({ compactMobile = false }: { compactMobile?: boole
     )
   }
 
+  // ── Connected state — account badge + dropdown menu ─────────────────────────
+
   if (status === "connected" && address) {
     return (
       <div ref={ref} className="relative">
         <Button
           id="wallet-account-trigger"
           variant="outline"
-          className="h-9.5 max-w-[8.5rem] whitespace-nowrap px-3 text-[13.5px] sm:max-w-none"
+          className="h-9.5 max-w-34 whitespace-nowrap px-3 text-13-5 sm:max-w-none"
           onClick={() => setOpen((v) => !v)}
           aria-label={`Wallet connected as ${shortenAddress(address)}`}
           aria-haspopup="menu"
           aria-expanded={open}
           aria-controls={open ? dropdownId : undefined}
         >
-          <span className="mr-1.5 inline-block size-2 rounded-full bg-green-500" />
-          <span className={compactMobile ? "hidden sm:inline" : ""}>{shortenAddress(address)}</span>
+          <span className="me-1.5 inline-block size-2 rounded-full bg-green-500" />
+          <span className={compactMobile ? "hidden sm:inline" : ""}>
+            {shortenAddress(address)}
+          </span>
           {compactMobile && (
             <span className="sm:hidden" aria-hidden="true">
               Wallet
             </span>
           )}
         </Button>
+
         {open && (
           <>
+            {/* Mobile backdrop */}
             <button
               type="button"
               className="fixed inset-0 z-40 bg-black/30 sm:hidden"
               aria-label="Close wallet menu"
               onClick={() => setOpen(false)}
             />
+
+            {/* Dropdown menu */}
             <div
               id={dropdownId}
               role="menu"
               aria-labelledby="wallet-account-trigger"
               onKeyDown={(event) => {
-                const items = menuItemRefs.current.filter(Boolean) as Array<HTMLButtonElement>
-                const currentIndex = items.findIndex((item) => item === document.activeElement)
+                const items = menuItemRefs.current.filter(
+                  Boolean
+                ) as Array<HTMLButtonElement>
+                const currentIndex = items.findIndex(
+                  (item) => item === document.activeElement
+                )
 
                 if (event.key === "Escape") {
                   event.preventDefault()
@@ -166,10 +147,12 @@ export function ConnectButton({ compactMobile = false }: { compactMobile?: boole
                   items[currentIndex]?.click()
                 }
               }}
-              className="fixed inset-x-0 bottom-0 z-50 rounded-t-2xl border border-border bg-background py-2 shadow-xl sm:absolute sm:right-0 sm:top-full sm:mt-1 sm:w-44 sm:rounded-lg"
+              className="fixed inset-x-0 bottom-0 z-50 rounded-t-2xl border border-border bg-background py-2 shadow-xl sm:absolute sm:top-full sm:inset-inline-end-0 sm:mt-1 sm:w-44 sm:rounded-lg"
             >
               <div className="border-b border-border px-3 py-2">
-                <p className="truncate text-xs text-muted-foreground">{address}</p>
+                <p className="truncate text-xs text-muted-foreground">
+                  {address}
+                </p>
               </div>
               <button
                 ref={(node) => {
@@ -181,7 +164,7 @@ export function ConnectButton({ compactMobile = false }: { compactMobile?: boole
                   void navigator.clipboard.writeText(address)
                   setOpen(false)
                 }}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+                className="flex w-full items-center gap-2 px-3 py-2 text-start text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
               >
                 Copy address
               </button>
@@ -191,8 +174,11 @@ export function ConnectButton({ compactMobile = false }: { compactMobile?: boole
                 }}
                 type="button"
                 role="menuitem"
-                onClick={() => { disconnect(); setOpen(false) }}
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+                onClick={() => {
+                  disconnect()
+                  setOpen(false)
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-start text-sm text-muted-foreground hover:bg-muted hover:text-foreground"
               >
                 Disconnect
               </button>
@@ -203,17 +189,17 @@ export function ConnectButton({ compactMobile = false }: { compactMobile?: boole
     )
   }
 
+  // ── Disconnected state — connect trigger + Dialog ───────────────────────────
+
   return (
     <>
       <Button
-        ref={connectTriggerRef}
         variant="outline"
-        className="h-9.5 whitespace-nowrap px-3 text-[13.5px] sm:px-4"
+        className="h-9.5 whitespace-nowrap px-3 text-13-5 sm:px-4"
         onClick={() => setWalletModalOpen(true)}
         aria-label="Connect wallet"
         aria-haspopup="dialog"
         aria-expanded={walletModalOpen}
-        aria-controls={walletModalOpen ? "wallet-connect-dialog" : undefined}
       >
         <span className={compactMobile ? "hidden sm:inline" : ""}>Connect</span>
         {compactMobile && (
@@ -223,29 +209,24 @@ export function ConnectButton({ compactMobile = false }: { compactMobile?: boole
         )}
       </Button>
 
-      {walletModalOpen && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 px-4"
-          onClick={() => setWalletModalOpen(false)}
+      {/*
+       * Focus trap, Escape-to-close, aria-modal, aria-labelledby, and
+       * aria-describedby are all managed by the @base-ui/react Dialog
+       * primitive — no manual event listeners needed here.
+       */}
+      <Dialog open={walletModalOpen} onOpenChange={setWalletModalOpen}>
+        <DialogContent
+          data-testid="wallet-connect-dialog"
+          className="sm:max-w-sm"
         >
-          <div
-            id="wallet-connect-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="wallet-connect-title"
-            aria-describedby="wallet-connect-description"
-            ref={modalRef}
-            className="w-full max-w-md rounded-xl border border-border bg-background p-4 shadow-xl"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="mb-4">
-              <h2 id="wallet-connect-title" className="text-base font-medium">
-                Connect Wallet
-              </h2>
-              <p id="wallet-connect-description" className="text-sm text-muted-foreground">
-                Choose a supported wallet to continue.
-              </p>
-            </div>
+          <DialogHeader>
+            <DialogTitle>Connect Wallet</DialogTitle>
+            <DialogDescription>
+              Choose a supported wallet to continue.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex flex-col gap-2">
             <Button
               type="button"
               className="w-full"
@@ -259,14 +240,14 @@ export function ConnectButton({ compactMobile = false }: { compactMobile?: boole
             <Button
               type="button"
               variant="ghost"
-              className="mt-2 w-full"
+              className="w-full"
               onClick={() => setWalletModalOpen(false)}
             >
               Cancel
             </Button>
           </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
     </>
   )
 }

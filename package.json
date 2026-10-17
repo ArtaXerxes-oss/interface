@@ -12,6 +12,8 @@
     "test": "node --test --experimental-strip-types apps/web/src/features/trade/lib/oracle.test.ts"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "jsdom": "^29.1.1",
     "prettier": "^3.8.1",
     "prettier-plugin-tailwindcss": "^0.7.2",
     "turbo": "^2.8.17",
@@ -24,5 +26,21 @@
   "workspaces": [
     "apps/*",
     "packages/*"
-  ]
+  ],
+  "overrides": {
+    "@modelcontextprotocol/sdk": "1.32.1",
+    "@simple-git/argv-parser": "2.0.1",
+    "axios": "1.20.0",
+    "basic-ftp": "6.2.3",
+    "got": "11.8.6",
+    "h3": "2.0.1-rc.29",
+    "parse-duration": "2.1.9",
+    "protobufjs": "7.6.6",
+    "qs": "6.16.1",
+    "simple-git": "4.0.2",
+    "tmp": "0.2.7",
+    "toml": "4.3.0",
+    "uuid": "11.1.1",
+    "ws": "8.22.0"
+  }
 }

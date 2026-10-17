@@ -1,11 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { fetchTokenPrices } from "../lib/oracle"
-import { activeQueryNetwork, queryKeys } from "../lib/query-keys"
-import { getOracleStaleness } from "../lib/pyth"
-import { useTokenList } from "./useTokenList"
-import type { TokenPrice } from "../lib/oracle"
-import type { OracleStaleness } from "../lib/pyth"
-import { queryPolicy } from "@/shared/lib/query-policies"
+import { queryKeys } from "../lib/query-keys"
+import type { PriceSource, TokenPrice } from "../lib/oracle"
 
 const CHAIN_ID = activeQueryNetwork()
 
@@ -14,7 +10,7 @@ const TEST_TO_BASE: Record<string, string> = {
   TWBTC: "BTC", TETH: "ETH", TXLM: "XLM", TUSDC: "USDC",
 }
 
-type PricesMap = Record<string, TokenPrice>
+type PricesMap = Record<string, TokenPrice | undefined>
 
 export function useTokenPrices() {
   const { getToken } = useTokenList()
@@ -22,30 +18,28 @@ export function useTokenPrices() {
   const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.tokenPrices(CHAIN_ID),
     queryFn: fetchTokenPrices,
-    ...queryPolicy("prices-depth", { fallbackPollMs: 5_000 }),
-    select(prices): PricesMap {
-      return Object.fromEntries(prices.map((p) => [p.symbol, p]))
-    },
+    staleTime: 3_000,
+    refetchInterval: 5_000,
   })
 
-  // Resolves a contract address or test symbol (TWBTC) → base symbol (BTC)
-  const resolveSymbol = (addressOrSymbol: string): string => {
-    const token = getToken(addressOrSymbol)
-    const tokenSymbol = token ? token.symbol : addressOrSymbol
-    return TEST_TO_BASE[tokenSymbol] ?? tokenSymbol
-  }
+  const pricesMap: PricesMap = data
+    ? Object.fromEntries(data.prices.map((p) => [p.symbol, p]))
+    : {}
+
+  const priceSource: PriceSource = data?.source ?? "fallback"
+
+  /** True when all live oracle sources failed and we are showing hard-coded dummy prices. */
+  const isPriceFallback = priceSource === "fallback"
 
   return {
-    prices: data ?? {},
+    prices: pricesMap,
+    priceSource,
+    isPriceFallback,
     isLoading,
     error,
-    getPrice: (addressOrSymbol: string): TokenPrice | undefined => {
-      const symbol = resolveSymbol(addressOrSymbol)
-      return data?.[symbol]
-    },
-    getMidPrice: (addressOrSymbol: string): number => {
-      const symbol = resolveSymbol(addressOrSymbol)
-      const p = data?.[symbol]
+    getPrice: (symbol: string): TokenPrice | undefined => pricesMap[symbol],
+    getMidPrice: (symbol: string): number => {
+      const p = pricesMap[symbol]
       if (!p) return 0
       return (p.minPrice + p.maxPrice) / 2
     },

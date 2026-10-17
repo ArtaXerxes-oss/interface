@@ -81,16 +81,18 @@ export default mergeConfig(
     },
     test: {
       include: ["src/**/*.{test,spec}.{ts,tsx}", "test/**/*.{test,spec}.{ts,tsx}"],
-      deps: {
-        inline: [
-          "react",
-          "react-dom",
-          "react/jsx-runtime",
-          "react/jsx-dev-runtime",
-          "@testing-library/react",
-          "@testing-library/user-event",
-          "@testing-library/jest-dom",
-        ],
+      server: {
+        deps: {
+          inline: [
+            "react",
+            "react-dom",
+            "react/jsx-runtime",
+            "react/jsx-dev-runtime",
+            "@testing-library/react",
+            "@testing-library/user-event",
+            "@testing-library/jest-dom",
+          ],
+        },
       },
     },
   }),

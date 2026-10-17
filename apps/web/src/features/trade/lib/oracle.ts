@@ -1,4 +1,4 @@
-// Oracle price feed — SO4 oracle (primary), Pyth Hermes (on-chain), Binance REST (display/candles).
+// Oracle price feed — Pyth Hermes (primary, on-chain), Binance REST (display/candles), GMX (last resort).
 //
 // Symbol conventions used in this file:
 //   base symbol  — "BTC", "ETH", "XLM", "USDC"  (used by external APIs)
@@ -11,7 +11,7 @@ import { ENV } from "../../../app/config/env"
 import { fetchPythAttestations } from "./pyth"
 import { formatPct } from "@/shared/lib/format"
 
-export type PriceSource = "so4" | "pyth" | "binance" | "gmx" | "fallback"
+export type PriceSource = "pyth" | "binance" | "gmx" | "fallback"
 
 export type TokenPrice = {
   symbol: string
@@ -104,39 +104,6 @@ function pctStr(pct: number): string {
   return formatPct(pct)
 }
 
-// ─── SO4 Oracle (primary price source) ───────────────────────────────────────
-
-const SO4_ORACLE_URL = "https://oracle.biscotti-proxy-worker.workers.dev"
-
-type So4OracleTicker = {
-  token: string    // contract address
-  symbol: string   // TWBTC, TETH, TXLM, TUSDC
-  min: number      // usdPrice × 10^30 (parsed as float — precision loss at low digits is acceptable)
-  max: number
-  timestamp: number // Unix seconds
-}
-
-async function fetchSo4OraclePrices(): Promise<Map<string, TokenPrice>> {
-  const res = await fetch(`${SO4_ORACLE_URL}/prices`)
-  if (!res.ok) throw new Error(`SO4 oracle HTTP ${res.status}`)
-  const tickers = (await res.json()) as Array<So4OracleTicker>
-
-  const map = new Map<string, TokenPrice>()
-  for (const t of tickers) {
-    const baseSymbol = TEST_TO_BASE[t.symbol]
-    if (!baseSymbol) continue
-    map.set(baseSymbol, {
-      symbol: baseSymbol,
-      address: t.token,
-      minPrice: t.min / 1e30,
-      maxPrice: t.max / 1e30,
-      updatedAt: t.timestamp * 1_000,
-      source: "so4",
-    })
-  }
-  return map
-}
-
 // ─── Binance display fallback ─────────────────────────────────────────────────
 
 type BinanceBookTicker = {
@@ -182,17 +149,7 @@ type GmxTicker = {
 }
 
 export async function fetchTokenPrices(): Promise<Array<TokenPrice>> {
-  // Primary: SO4 oracle (deployed, aggregates Binance + Coinbase + Pyth)
-  try {
-    const so4Map = await fetchSo4OraclePrices()
-    if (so4Map.size > 0) {
-      return DUMMY_PRICES.map((d) => so4Map.get(d.symbol) ?? d)
-    }
-  } catch {
-    // Fall through to Pyth
-  }
-
-  // Secondary: Pyth Hermes
+  // Primary: Pyth Hermes
   const pythMap = new Map<string, TokenPrice>()
   try {
     const attestations = await fetchPythAttestations([...TRACKED_SYMBOLS])

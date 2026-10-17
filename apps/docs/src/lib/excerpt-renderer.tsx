@@ -23,7 +23,7 @@ export function renderExcerpt(excerpt: string): React.ReactNode {
         .replace(/</g, "&lt;")
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;")
+        .replace(/'/g, "&#039;") // ds-allow: HTML character reference, not a hex color
 
       if (inMark) {
         elements.push(
@@ -51,5 +51,5 @@ export function getExcerptText(excerpt: string): string {
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
-    .replace(/&#039;/g, "'")
+    .replace(/&#039;/g, "'") // ds-allow: HTML character reference, not a hex color
 }

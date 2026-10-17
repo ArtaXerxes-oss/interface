@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useEffect, useState } from "react"
 import { ORDER_EXECUTION_FROZEN_MESSAGE } from "@/lib/contracts"
 
 const SESSION_KEY = "so4-order-execution-frozen-dismissed"
@@ -12,9 +12,7 @@ export function OrderExecutionFrozenBanner({ visible }: Props) {
 
   useEffect(() => {
     try {
-      if (typeof window !== "undefined" && sessionStorage) {
-        setDismissed(sessionStorage.getItem(SESSION_KEY) === "1")
-      }
+      setDismissed(sessionStorage.getItem(SESSION_KEY) === "1")
     } catch {
       // Safari private mode can throw when accessing sessionStorage
     }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useMemo, useState } from "react"
 import {
   Tabs,
   TabsContent,
@@ -15,12 +15,12 @@ import { useTradeFees } from "../../hooks/useTradeFees"
 import { useMarketRiskParams } from "../../hooks/useMarketRiskParams"
 import { usePositions } from "../../hooks/usePositions"
 import { useTokenBalances } from "../../../wallet/hooks/useTokenBalances"
-// NB: useTokenBalances is also consumed here (not only in TradeInputs) to
-// validate the entered amount against the wallet balance before submit.
-import { sizeFromCollateralAndLeverage } from "../../lib/trade-math"
-import { getToken } from "../../data/tokens"
-import { clampLeverage, estimatePositionRisk } from "../../lib/risk"
-import { EXECUTION_SUPPORT } from "../../lib/execution-support"
+import {
+  estimateLiquidationPrice,
+  formatUsd,
+  sizeFromCollateralAndLeverage,
+} from "../../lib/trade-math"
+import { PriceFallbackBanner } from "../PriceFallbackBanner"
 import { TradeInfoRows } from "./TradeInfoRows"
 import { ConfirmationDialog } from "./ConfirmationDialog"
 import { ApplyReferralCodePrompt } from "./ApplyReferralCodePrompt"
@@ -36,14 +36,9 @@ import {
   validatePrice,
 } from "@/lib/input-validation"
 
-type TradeController = ReturnType<typeof useTradeState>
-
-type TradePanelProps = {
-  trade: TradeController
-}
-
-export function TradePanel({ trade }: TradePanelProps) {
-  const { getMidPrice, isStale } = useTokenPrices()
+export function TradePanel() {
+  const trade = useTradeState()
+  const { getMidPrice, isPriceFallback } = useTokenPrices()
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [priceValidationError, setPriceValidationError] = useState<string | null>(null)
   const [previousMode, setPreviousMode] = useState<TradeMode>(trade.tradeMode)
@@ -83,13 +78,11 @@ export function TradePanel({ trade }: TradePanelProps) {
   }, [leverage, maxLeverage, marketRisk.state, setLeverage])
 
   const entryPrice = getMidPrice(toTokenAddress)
-  // Collateral is configured per market and side, so it can be unset; an
-  // unknown key prices at 0, which is the right "no collateral selected" value.
   const collateralUsd =
-    parseFloat(fromAmount || "0") * getMidPrice(collateralAddress ?? "")
+    parseFloat(fromAmount || "0") * getMidPrice(collateralAddress)
   const sizeUsd = tradeFlags.isSwap
     ? collateralUsd
-    : sizeFromCollateralAndLeverage(collateralUsd, boundedLeverage)
+    : sizeFromCollateralAndLeverage(collateralUsd, leverage)
 
   const fees = useTradeFees({
     sizeUsd,
@@ -122,27 +115,15 @@ export function TradePanel({ trade }: TradePanelProps) {
     const wasPriceMode = previousMode === "Limit" || previousMode === "Trigger"
     const isPriceMode = tradeMode === "Limit" || tradeMode === "Trigger"
 
-    if (wasPriceMode && !isPriceMode) {
-      // Switching from Limit/Trigger to Market — price is discarded
-      toast.show({
-        variant: "info",
-        message: "Limit price cleared",
-        description: `Switched to ${tradeMode} order. Limit price field has been cleared.`,
-      })
-    } else if (!wasPriceMode && isPriceMode) {
-      // Switching from Market to Limit/Trigger — will need to enter price
-      toast.show({
-        variant: "info",
-        message: `${tradeMode} price required`,
-        description: `Enter ${tradeMode === "Limit" ? "limit" : "trigger"} price to proceed.`,
-      })
-    }
-
-    setPreviousMode(tradeMode)
-  }, [tradeMode, previousMode])
+  // Order submission is disabled when live prices are unavailable to prevent
+  // trades being submitted at stale hard-coded dummy prices.
+  const canTrade = parseFloat(fromAmount || "0") > 0 && !isPriceFallback
 
   return (
-    <div className="flex min-w-0 flex-col gap-3 p-4">
+    <div className="flex flex-col gap-3 p-4">
+      {/* ── Price fallback blocking banner ────────────────────────── */}
+      {isPriceFallback && <PriceFallbackBanner />}
+
       {/* ── Trade type tabs: Long / Short / Swap ───────────────────── */}
       <Tabs
         value={tradeType}
@@ -211,7 +192,7 @@ export function TradePanel({ trade }: TradePanelProps) {
                 }
               }}
             />
-            <span className="absolute top-1/2 inset-inline-end-3 -translate-y-1/2 text-xs text-muted-foreground">
+            <span className="absolute top-1/2 right-3 -translate-y-1/2 text-xs text-muted-foreground">
               USD
             </span>
           </div>
@@ -326,8 +307,11 @@ export function TradePanel({ trade }: TradePanelProps) {
         }`}
         disabled={!canTrade || priceValidationError !== null}
         onClick={() => setConfirmOpen(true)}
+        aria-disabled={isPriceFallback}
       >
-        {tradeType} {!tradeFlags.isSwap && toTokenLabel}
+        {isPriceFallback
+          ? "Prices unavailable"
+          : `${tradeType}${!tradeFlags.isSwap ? ` ${toTokenAddress}` : ""}`}
       </Button>
 
       {/* ── Confirmation modal ───────────────────────────────────── */}
@@ -348,8 +332,15 @@ export function TradePanel({ trade }: TradePanelProps) {
 
 // ── Pay / Receive inputs ─────────────────────────────────────────────────────
 
-function TradeInputs({ trade, validationError }: { trade: ReturnType<typeof useTradeState>; validationError?: string }) {
-  const { fromAmount, fromTokenAddress, toTokenAddress, collateralAddress, tradeFlags, setFromAmount, switchTokens } = trade
+function TradeInputs({ trade }: { trade: ReturnType<typeof useTradeState> }) {
+  const {
+    fromAmount,
+    fromTokenAddress,
+    toTokenAddress,
+    tradeFlags,
+    setFromAmount,
+    switchTokens,
+  } = trade
   const { getMidPrice } = useTokenPrices()
   const { data: balances } = useTokenBalances()
   const [amountValidationError, setAmountValidationError] = useState<string | null>(null)
@@ -386,26 +377,31 @@ function TradeInputs({ trade, validationError }: { trade: ReturnType<typeof useT
           {walletBalance !== undefined && (
             <span className="min-w-0 text-right text-xs text-muted-foreground">
               Balance:{" "}
-              <span className="font-mono font-medium text-foreground [overflow-wrap:anywhere]">
-                {walletBalance.toLocaleString(undefined, { maximumFractionDigits: 6 })}{" "}
-                {fromTokenLabel}
+              <span className="font-mono font-medium text-foreground">
+                {walletBalance.toLocaleString(undefined, {
+                  maximumFractionDigits: 6,
+                })}{" "}
+                {fromTokenAddress}
               </span>
             </span>
           )}
         </div>
-        <NumberInput
-          value={fromAmount}
-          onValueChange={handleAmountChange}
-          placeholder="0.00"
-          className="font-mono text-sm"
-          onMax={walletBalance !== undefined ? () => {
-            const maxStr = walletBalance.toString()
-            handleAmountChange(maxStr)
-          } : undefined}
-          usdValue={fromUsd > 0 ? fromUsd : undefined}
-        />
-        {(validationError || amountValidationError) && (
-          <p className="text-xs text-red-500 [overflow-wrap:anywhere]">{validationError || amountValidationError}</p>
+        <div className="relative">
+          <Input
+            type="number"
+            placeholder="0.00"
+            value={fromAmount}
+            onChange={(e) => setFromAmount(e.target.value)}
+            className="pr-16 font-mono text-sm"
+          />
+          <span className="absolute top-1/2 right-3 -translate-y-1/2 text-xs font-medium text-muted-foreground">
+            {fromTokenAddress}
+          </span>
+        </div>
+        {fromUsd > 0 && (
+          <p className="text-right text-xs text-muted-foreground">
+            {formatUsd(fromUsd)}
+          </p>
         )}
       </div>
 
@@ -420,12 +416,11 @@ function TradeInputs({ trade, validationError }: { trade: ReturnType<typeof useT
       )}
 
       {/* Receive / Index token label */}
-      <div className="flex min-w-0 items-center justify-between gap-2 text-xs">
-        <span className="shrink-0 text-muted-foreground">{tradeFlags.isSwap ? "Receive" : "Market"}</span>
-        <span className="flex min-w-0 items-center justify-end gap-1.5 font-medium">
-          <TokenIcon symbol={toTokenLabel.replace(/^T/, "")} size={16} />
-          <span className="min-w-0 truncate">{toTokenLabel}/USD</span>
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-muted-foreground">
+          {tradeFlags.isSwap ? "Receive" : "Market"}
         </span>
+        <span className="font-medium">{toTokenAddress}/USD</span>
       </div>
     </div>
   )

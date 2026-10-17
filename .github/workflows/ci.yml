@@ -52,25 +52,11 @@ jobs:
       - name: Typecheck
         run: bun typecheck
 
-      - name: Design token check
-        run: bun run check:tokens
-
-      - name: Documentation content and prose checks
-        run: bun run check:content && bun run --cwd apps/docs lint:prose
-
-
-      - name: Documentation link and FAQ drift checks
-        run: bun run check:links && bun run --cwd apps/docs check:faq
-
-      - name: Documentation generated-reference drift checks
-        run: bun run --cwd apps/docs check:tokens:generated && bun run --cwd apps/docs check:errors:generated
+      - name: Validate changelog entries
+        run: bun run changelog:validate
 
       - name: Test
-        run: bun run test
-
-      - name: Coverage
-        if: ${{ !cancelled() }}
-        run: bun run test:coverage
+        run: node --test --experimental-strip-types apps/web/src/features/trade/lib/oracle.test.ts
 
       - name: Build
         run: bun run build

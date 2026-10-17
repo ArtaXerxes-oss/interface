@@ -13,12 +13,19 @@ import { formatPct } from "@/shared/lib/format"
 
 export type PriceSource = "pyth" | "binance" | "gmx" | "fallback"
 
+export type PriceSource = "binance" | "gmx" | "fallback"
+
 export type TokenPrice = {
   symbol: string
   address: string
   minPrice: number
   maxPrice: number
   updatedAt: number   // ms
+  source: PriceSource
+}
+
+export type TokenPriceResult = {
+  prices: Array<TokenPrice>
   source: PriceSource
 }
 
@@ -148,9 +155,8 @@ type GmxTicker = {
   updatedAt: number
 }
 
-export async function fetchTokenPrices(): Promise<Array<TokenPrice>> {
-  // Primary: Pyth Hermes
-  const pythMap = new Map<string, TokenPrice>()
+export async function fetchTokenPrices(): Promise<TokenPriceResult> {
+  // Try Binance first
   try {
     const attestations = await fetchPythAttestations([...TRACKED_SYMBOLS])
     for (const a of attestations) {
@@ -174,13 +180,10 @@ export async function fetchTokenPrices(): Promise<Array<TokenPrice>> {
     } catch {
       // Pyth-only is acceptable
     }
-    return DUMMY_PRICES.map((d) => pythMap.get(d.symbol) ?? binanceMap.get(d.symbol) ?? d)
-  }
-
-  // Tertiary: Binance REST
-  try {
-    const binanceMap = await fetchBinanceDisplayPrices()
-    return DUMMY_PRICES.map((d) => binanceMap.get(d.symbol) ?? d)
+    return {
+      prices: DUMMY_PRICES.map((d) => liveMap.get(d.symbol) ?? d),
+      source: "binance",
+    }
   } catch {
     // Fall through to GMX
   }
@@ -202,9 +205,16 @@ export async function fetchTokenPrices(): Promise<Array<TokenPrice>> {
         source: "gmx",
       })
     }
-    return DUMMY_PRICES.map((d) => liveMap.get(d.symbol) ?? d)
+    return {
+      prices: DUMMY_PRICES.map((d) => liveMap.get(d.symbol) ?? d),
+      source: "gmx",
+    }
   } catch {
-    return DUMMY_PRICES
+    // Both live sources failed — return static dummy prices with fallback marker
+    return {
+      prices: DUMMY_PRICES.map((d) => ({ ...d, updatedAt: Date.now() })),
+      source: "fallback",
+    }
   }
 }
 

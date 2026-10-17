@@ -42,5 +42,11 @@ jobs:
       - name: Typecheck
         run: bun typecheck
 
+      - name: Validate changelog entries
+        run: bun run changelog:validate
+
+      - name: Test
+        run: node --test --experimental-strip-types apps/web/src/features/trade/lib/oracle.test.ts
+
       - name: Build
         run: bun run build

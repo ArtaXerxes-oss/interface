@@ -7,7 +7,9 @@
     "dev": "turbo dev",
     "lint": "turbo lint",
     "format": "turbo format",
-    "typecheck": "turbo typecheck"
+    "typecheck": "turbo typecheck",
+    "changelog:validate": "node scripts/validate-changelog.mjs",
+    "test": "node --test --experimental-strip-types apps/web/src/features/trade/lib/oracle.test.ts"
   },
   "devDependencies": {
     "prettier": "^3.8.1",

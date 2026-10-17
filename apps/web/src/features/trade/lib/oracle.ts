@@ -10,12 +10,19 @@ import { ENV } from "../../../app/config/env"
 import { formatPct } from "@/shared/lib/format"
 
 
+export type PriceSource = "binance" | "gmx" | "fallback"
+
 export type TokenPrice = {
   symbol: string
   address: string
   minPrice: number
   maxPrice: number
   updatedAt: number   // ms
+}
+
+export type TokenPriceResult = {
+  prices: Array<TokenPrice>
+  source: PriceSource
 }
 
 export type OhlcBar = {
@@ -89,7 +96,7 @@ type GmxTicker = {
   updatedAt: number
 }
 
-export async function fetchTokenPrices(): Promise<Array<TokenPrice>> {
+export async function fetchTokenPrices(): Promise<TokenPriceResult> {
   // Try Binance first
   try {
     const syms = JSON.stringify(Object.values(BINANCE_SYMBOL))
@@ -108,7 +115,10 @@ export async function fetchTokenPrices(): Promise<Array<TokenPrice>> {
       const ask = parseFloat(t.askPrice)
       liveMap.set(sym, { symbol: sym, address: sym, minPrice: bid, maxPrice: ask, updatedAt: Date.now() })
     }
-    return DUMMY_PRICES.map((d) => liveMap.get(d.symbol) ?? d)
+    return {
+      prices: DUMMY_PRICES.map((d) => liveMap.get(d.symbol) ?? d),
+      source: "binance",
+    }
   } catch {
     // Fall through to GMX
   }
@@ -129,9 +139,16 @@ export async function fetchTokenPrices(): Promise<Array<TokenPrice>> {
         updatedAt: t.updatedAt,
       })
     }
-    return DUMMY_PRICES.map((d) => liveMap.get(d.symbol) ?? d)
+    return {
+      prices: DUMMY_PRICES.map((d) => liveMap.get(d.symbol) ?? d),
+      source: "gmx",
+    }
   } catch {
-    return DUMMY_PRICES
+    // Both live sources failed — return static dummy prices with fallback marker
+    return {
+      prices: DUMMY_PRICES.map((d) => ({ ...d, updatedAt: Date.now() })),
+      source: "fallback",
+    }
   }
 }
 
